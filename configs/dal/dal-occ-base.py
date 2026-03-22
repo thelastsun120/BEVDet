@@ -1,0 +1,27 @@
+_base_ = ['./dal-base.py']
+
+model = dict(
+    type='DALOcc',
+    pts_bbox_head=dict(
+        type='DALOccHead',
+        occ_enabled=True,
+        occ_num_classes=2,
+        occ_z_bins=4,
+        occ_topk_ratio=0.1,
+        occ_prop_threshold=0.3,
+        occ_use_gt_mask=True,
+        occ_feedback='cls',
+        occ_prop_weight=1.0,
+        occ_detach_feedback=False,
+        loss_occ_proposal=dict(
+            type='FocalLoss',
+            use_sigmoid=True,
+            gamma=2.0,
+            alpha=0.25,
+            reduction='mean',
+            loss_weight=1.0),
+        loss_occ=dict(
+            type='CrossEntropyLoss',
+            use_sigmoid=False,
+            reduction='mean',
+            loss_weight=1.0)))
