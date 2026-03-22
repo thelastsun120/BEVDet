@@ -66,6 +66,7 @@ Welcome to MMDetection3D's documentation!
    :caption: 说明
 
    benchmarks.md
+   dal_sparse_pillar_occ_plan.md
 
 .. toctree::
    :maxdepth: 1
