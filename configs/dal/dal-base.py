@@ -59,7 +59,7 @@ model = dict(
     use_grid_mask=True,
     # camera
     img_backbone=dict(
-        pretrained='torchvision://resnet18',
+        pretrained='./ckpts/resnet18',
         type='ResNet',
         depth=18,
         num_stages=4,

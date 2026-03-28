@@ -220,3 +220,9 @@ data = dict(
         ann_file=data_root + 'bevdetv3-nuscenes_infos_val.pkl',
         img_info_prototype='bevdet',
         box_type_3d='LiDAR'))
+
+# Disable DAL two-stage pipeline mutation for the joint config because the
+# occupancy loader introduces extra pipeline steps and breaks the hard-coded
+# index assertion in tools/train.py.
+two_stage = False
+runner = dict(type='EpochBasedRunner', max_epochs=20)
