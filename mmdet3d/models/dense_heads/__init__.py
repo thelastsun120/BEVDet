@@ -5,6 +5,7 @@ from .base_conv_bbox_head import BaseConvBboxHead
 from .base_mono3d_dense_head import BaseMono3DDenseHead
 from .centerpoint_head import CenterHead
 from .dal_head import DALHead
+from .dal_occ_head import DALOccHead
 from .fcaf3d_head import FCAF3DHead
 from .fcos_mono3d_head import FCOSMono3DHead
 from .free_anchor3d_head import FreeAnchor3DHead
@@ -24,5 +25,6 @@ __all__ = [
     'SSD3DHead', 'BaseConvBboxHead', 'CenterHead', 'ShapeAwareHead',
     'BaseMono3DDenseHead', 'AnchorFreeMono3DHead', 'FCOSMono3DHead',
     'GroupFree3DHead', 'PointRPNHead', 'SMOKEMono3DHead', 'PGDHead',
-    'MonoFlexHead', 'FCAF3DHead'
+    'MonoFlexHead', 'FCAF3DHead', 'DALHead', 'DALOccHead',
+    'TransFusionHead'
 ]
