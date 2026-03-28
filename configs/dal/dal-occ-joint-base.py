@@ -103,7 +103,6 @@ train_pipeline = [
         is_train=True,
         opencv_pp=True,
         data_config=data_config),
-    dict(type='LoadOccGTFromFile'),
     dict(
         type='LoadPointsFromFile',
         coord_type='LIDAR',
@@ -120,6 +119,7 @@ train_pipeline = [
     dict(type='ToEgo'),
     dict(type='LoadAnnotations'),
     dict(type='ObjectSample', db_sampler=db_sampler),
+    dict(type='LoadOccGTFromFile'),
     dict(type='VelocityAug'),
     dict(type='BEVAug', bda_aug_conf=bda_aug_conf, classes=class_names),
     dict(type='PointToMultiViewDepthFusion', downsample=1, grid_config=grid_config),
