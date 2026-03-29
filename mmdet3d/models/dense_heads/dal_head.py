@@ -22,8 +22,29 @@ class DALHead(TransFusionHead):
                  feat_bev_img_dim=32,
                  sparse_fuse_layers=2,
                  dense_fuse_layers=2,
+                 use_spar_p=False,
+                 spar_p_alpha=0.5,
+                 spar_p_mid_channels=None,
+                 spar_p_learnable_alpha=False,
+                 use_spar_c=False,
+                 spar_c_kernel=3,
+                 spar_c_pool_modes=('max', 'avg'),
+                 spar_c_ctx_dim=32,
+                 spar_c_mlp_layers=2,
                  **kwargs):
         super(DALHead, self).__init__(**kwargs)
+        self.use_spar_p = use_spar_p
+        self.spar_p_mid_channels = spar_p_mid_channels or kwargs['hidden_channel']
+        self.spar_p_learnable_alpha = spar_p_learnable_alpha
+        if self.spar_p_learnable_alpha:
+            self.spar_p_alpha = nn.Parameter(torch.tensor(float(spar_p_alpha)))
+        else:
+            self.spar_p_alpha = float(spar_p_alpha)
+        self.use_spar_c = use_spar_c
+        self.spar_c_kernel = spar_c_kernel
+        self.spar_c_pool_modes = tuple(spar_c_pool_modes)
+        self.spar_c_ctx_dim = spar_c_ctx_dim
+        self.spar_c_mlp_layers = spar_c_mlp_layers
 
         # fuse net for first stage dense prediction
         cfg = dict(
@@ -35,9 +56,69 @@ class DALHead(TransFusionHead):
             backbone_output_ids=[0, ])
         self.dense_heatmap_fuse_convs = builder.build_backbone(cfg)
 
+        if self.use_spar_p:
+            self.spar_p_refiner = nn.Sequential(
+                ConvModule(
+                    kwargs['hidden_channel'],
+                    self.spar_p_mid_channels,
+                    kernel_size=3,
+                    stride=1,
+                    padding=1,
+                    bias='auto',
+                    conv_cfg=dict(type='Conv2d'),
+                    norm_cfg=dict(type='BN2d')),
+                ConvModule(
+                    self.spar_p_mid_channels,
+                    self.spar_p_mid_channels,
+                    kernel_size=3,
+                    stride=1,
+                    padding=1,
+                    bias='auto',
+                    conv_cfg=dict(type='Conv2d'),
+                    norm_cfg=dict(type='BN2d')))
+            self.spar_p_residual = nn.Sequential(
+                ConvModule(
+                    self.spar_p_mid_channels,
+                    self.spar_p_mid_channels,
+                    kernel_size=3,
+                    stride=1,
+                    padding=1,
+                    bias='auto',
+                    conv_cfg=dict(type='Conv2d'),
+                    norm_cfg=dict(type='BN2d')))
+            self.spar_p_out = build_conv_layer(
+                dict(type='Conv2d'),
+                self.spar_p_mid_channels,
+                self.num_classes,
+                kernel_size=1,
+                stride=1,
+                padding=0)
+
         # fuse net for second stage sparse prediction
         fuse_convs = []
         c_in = img_feat_dim + kwargs['hidden_channel'] + feat_bev_img_dim
+        if self.use_spar_c:
+            if not set(self.spar_c_pool_modes).issubset({'max', 'avg'}):
+                raise ValueError('spar_c_pool_modes only supports max/avg')
+            pooled_feat_scale = len(self.spar_c_pool_modes)
+            if self.spar_c_mlp_layers < 1:
+                raise ValueError('spar_c_mlp_layers should be >= 1')
+            ctx_layers = []
+            c_in_ctx = kwargs['hidden_channel'] * pooled_feat_scale
+            for _ in range(self.spar_c_mlp_layers):
+                ctx_layers.append(
+                    ConvModule(
+                        c_in_ctx,
+                        self.spar_c_ctx_dim,
+                        kernel_size=1,
+                        stride=1,
+                        padding=0,
+                        bias='auto',
+                        conv_cfg=dict(type='Conv1d'),
+                        norm_cfg=dict(type='BN1d')))
+                c_in_ctx = self.spar_c_ctx_dim
+            self.spar_c_ctx_proj = nn.Sequential(*ctx_layers)
+            c_in += self.spar_c_ctx_dim
         for i in range(sparse_fuse_layers - 1):
             fuse_convs.append(
                 ConvModule(
@@ -66,6 +147,38 @@ class DALHead(TransFusionHead):
         for m in self.dense_heatmap_fuse_convs.modules():
             if isinstance(m, nn.Conv2d):
                 kaiming_init(m)
+        if self.use_spar_p:
+            for m in self.spar_p_refiner.modules():
+                if isinstance(m, nn.Conv2d):
+                    kaiming_init(m)
+            for m in self.spar_p_residual.modules():
+                if isinstance(m, nn.Conv2d):
+                    kaiming_init(m)
+            kaiming_init(self.spar_p_out)
+
+    def extract_local_context_feat(self, bev_feat, top_proposals_index):
+        """Extract local BEV context features for top-k proposals."""
+        batch_size, channel, _, _ = bev_feat.shape
+        kernel = self.spar_c_kernel
+        if kernel % 2 == 0:
+            raise ValueError('spar_c_kernel should be odd.')
+        gather_index = top_proposals_index.unsqueeze(1).expand(
+            -1, channel, -1)  # [B,C,num_proposals]
+        pooled_ctx = []
+        if 'max' in self.spar_c_pool_modes:
+            max_map = F.max_pool2d(
+                bev_feat, kernel_size=kernel, stride=1, padding=kernel // 2)
+            max_map = max_map.view(batch_size, channel, -1)
+            pooled_ctx.append(max_map.gather(index=gather_index, dim=-1))
+        if 'avg' in self.spar_c_pool_modes:
+            avg_map = F.avg_pool2d(
+                bev_feat, kernel_size=kernel, stride=1, padding=kernel // 2)
+            avg_map = avg_map.view(batch_size, channel, -1)
+            pooled_ctx.append(avg_map.gather(index=gather_index, dim=-1))
+        if not pooled_ctx:
+            raise ValueError('spar_c_pool_modes can not be empty.')
+        ctx_feat = torch.cat(pooled_ctx, dim=1)
+        return self.spar_c_ctx_proj(ctx_feat)
 
     @force_fp32()
     def extract_img_feat_from_3dpoints(self, points, img_inputs_list, fuse=True):
@@ -199,6 +312,13 @@ class DALHead(TransFusionHead):
         dense_fuse_feat = \
             self.dense_heatmap_fuse_convs(dense_fuse_feat)[0]
         dense_heatmap = self.heatmap_head(dense_fuse_feat)
+        if self.use_spar_p:
+            spar_feat = self.spar_p_refiner(dense_fuse_feat)
+            spar_feat = F.relu(self.spar_p_residual(spar_feat) + spar_feat)
+            spar_prior_map = self.spar_p_out(spar_feat)
+            alpha = self.spar_p_alpha.sigmoid() if self.spar_p_learnable_alpha \
+                else self.spar_p_alpha
+            dense_heatmap = dense_heatmap + alpha * spar_prior_map
         heatmap = dense_heatmap.detach().sigmoid()
 
         # generate proposal
@@ -235,6 +355,10 @@ class DALHead(TransFusionHead):
 
         query_feat_fuse = torch.cat([query_feat_lidar, query_feat_img,
                                      query_feat_img_bev], dim=1)
+        if self.use_spar_c:
+            query_feat_ctx = self.extract_local_context_feat(
+                dense_fuse_feat, top_proposals_index.squeeze(1))
+            query_feat_fuse = torch.cat([query_feat_fuse, query_feat_ctx], dim=1)
         query_feat_fuse = self.fuse_convs(query_feat_fuse)
         res['heatmap'] = \
             self.prediction_heads[0].__getattr__('heatmap')(query_feat_fuse)
