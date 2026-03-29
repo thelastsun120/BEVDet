@@ -141,21 +141,19 @@ class DALHead(TransFusionHead):
         kernel = self.spar_c_kernel
         if kernel % 2 == 0:
             raise ValueError('spar_c_kernel should be odd.')
-
-        patches = F.unfold(
-            bev_feat, kernel_size=kernel, padding=kernel // 2, stride=1)
-        patches = patches.view(
-            batch_size, channel, kernel * kernel, -1)  # [B,C,K*K,H*W]
-
-        gather_index = top_proposals_index.unsqueeze(1).unsqueeze(2).expand(
-            -1, channel, kernel * kernel, -1)
-        proposal_patches = patches.gather(index=gather_index, dim=-1)
-
+        gather_index = top_proposals_index.unsqueeze(1).expand(
+            -1, channel, -1)  # [B,C,num_proposals]
         pooled_ctx = []
         if 'max' in self.spar_c_pool_modes:
-            pooled_ctx.append(proposal_patches.max(dim=2).values)
+            max_map = F.max_pool2d(
+                bev_feat, kernel_size=kernel, stride=1, padding=kernel // 2)
+            max_map = max_map.view(batch_size, channel, -1)
+            pooled_ctx.append(max_map.gather(index=gather_index, dim=-1))
         if 'avg' in self.spar_c_pool_modes:
-            pooled_ctx.append(proposal_patches.mean(dim=2))
+            avg_map = F.avg_pool2d(
+                bev_feat, kernel_size=kernel, stride=1, padding=kernel // 2)
+            avg_map = avg_map.view(batch_size, channel, -1)
+            pooled_ctx.append(avg_map.gather(index=gather_index, dim=-1))
         if not pooled_ctx:
             raise ValueError('spar_c_pool_modes can not be empty.')
         ctx_feat = torch.cat(pooled_ctx, dim=1)
